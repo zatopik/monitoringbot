@@ -16,14 +16,14 @@
           buildInputs = with pkgs; [
             go
             gopls
-            gotools
-            golangci-lint
-	    goose
+	    ollama
+	    pkg-config
           ];
 
           shellHook = ''
             echo "Go Flake Shell loaded!"
             go version
+	    export OLLAMA_HOST="127.0.0.1:11434"
           '';
         };
       });
