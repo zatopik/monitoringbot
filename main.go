@@ -50,6 +50,38 @@ func main() {
 			bot.Send(tgbotapi.NewMessage(chatID, "🧹 Контекст беседы очищен!"))
 			continue
 		}
+		if update.Message.IsCommand() && update.Message.Command() == "docker" {
+			// 1. Проверяем список запущенных контейнеров (ID, Имя, Статус, Образ)
+			// Используем --format для чистого вывода, который легче понять нейронке
+			cmd := exec.Command("docker", "ps", "--format", "table {{.Names}}\t{{.Status}}\t{{.Image}}")
+			out, err := cmd.Output()
+
+			dockerData := string(out)
+			if err != nil {
+				dockerData = "Ошибка: Docker не запущен или нет прав доступа (попробуйте sudo usermod -aG docker $USER)."
+			} else if len(strings.TrimSpace(dockerData)) <= 10 { // Если только заголовок таблицы
+				dockerData = "Docker запущен, но активных контейнеров нет."
+			}
+
+			// 2. Анализ нейронкой
+			prompt := fmt.Sprintf("Вот список запущенных Docker-контейнеров:\n%s\nПроанализируй их состояние как сисадмин.", dockerData)
+
+			var analysis string
+			req := &api.GenerateRequest{Model: "qwen2.5-coder:3b", Prompt: prompt}
+			_ = client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+				analysis += resp.Response
+				return nil
+			})
+
+			// 3. Сохраняем в историю для контекста
+			history[chatID] = append(history[chatID], api.Message{Role: "user", Content: "Проверь докер"})
+			history[chatID] = append(history[chatID], api.Message{Role: "assistant", Content: analysis})
+
+			msg := tgbotapi.NewMessage(chatID, "🐳 *Статус Docker:* \n\n"+analysis)
+			msg.ParseMode = "Markdown"
+			bot.Send(msg)
+			continue
+		}
 
 		// --- КОМАНДА /nginx (Проверка статуса) ---
 		if update.Message.IsCommand() && update.Message.Command() == "nginx" {
