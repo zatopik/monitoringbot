@@ -15,7 +15,7 @@ import (
 
 func main() {
 	// 1. Инициализация Telegram бота
-	botToken := "8496384470:AAGdDOerTLkSCaWpwG_hPQkbpdeo6aC_owU"
+	botToken := ""
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
 		log.Panic(err)
@@ -73,6 +73,34 @@ func main() {
 			history[chatID] = append(history[chatID], api.Message{Role: "user", Content: "Какой статус у Nginx?"})
 			history[chatID] = append(history[chatID], api.Message{Role: "assistant", Content: explain})
 
+			continue
+		}
+		if update.Message.IsCommand() && update.Message.Command() == "ports" {
+			// Выполняем команду ss -tulpn (TCP/UDP, Listening, Processes, Numbers)
+			// Мы берем только TCP для краткости: ss -ltn
+			out, err := exec.Command("ss", "-ltn").Output()
+			portsList := string(out)
+			if err != nil || portsList == "" {
+				portsList = "Не удалось получить список портов."
+			}
+
+			// Просим нейронку проанализировать порты
+			prompt := fmt.Sprintf("Вот список открытых TCP-портов на сервере:\n%s\nКакие из них стандартные, а на какие стоит обратить внимание?", portsList)
+
+			var analysis string
+			req := &api.GenerateRequest{Model: "qwen2.5-coder:3b", Prompt: prompt}
+			_ = client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+				analysis += resp.Response
+				return nil
+			})
+
+			// Сохраняем в историю, чтобы бот "помнил" порты в чате
+			history[chatID] = append(history[chatID], api.Message{Role: "user", Content: "Какие порты открыты?"})
+			history[chatID] = append(history[chatID], api.Message{Role: "assistant", Content: analysis})
+
+			msg := tgbotapi.NewMessage(chatID, "🔌 *Открытые порты:* \n\n"+analysis)
+			msg.ParseMode = "Markdown"
+			bot.Send(msg)
 			continue
 		}
 
