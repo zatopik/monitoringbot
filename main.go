@@ -59,12 +59,13 @@ func main() {
 			dockerData := string(out)
 			if err != nil {
 				dockerData = "Ошибка: Docker не запущен или нет прав доступа (попробуйте sudo usermod -aG docker $USER)."
-			} else if len(strings.TrimSpace(dockerData)) <= 10 { // Если только заголовок таблицы
+			} else if len(strings.TrimSpace(dockerData)) <= 20 { // Если только заголовок таблицы
 				dockerData = "Docker запущен, но активных контейнеров нет."
 			}
 
 			// 2. Анализ нейронкой
-			prompt := fmt.Sprintf("Вот список запущенных Docker-контейнеров:\n%s\nПроанализируй их состояние как сисадмин.", dockerData)
+
+			prompt := fmt.Sprintf("ИНСТРУКЦИЯ: Ты сисадмин. Проанализируй этот список контейнеров и дай отчет. Если список пуст, так и скажи. СПИСОК:\n%s", dockerData)
 
 			var analysis string
 			req := &api.GenerateRequest{Model: "qwen2.5-coder:3b", Prompt: prompt}
@@ -82,7 +83,44 @@ func main() {
 			bot.Send(msg)
 			continue
 		}
+		if update.Message.IsCommand() && update.Message.Command() == "systemd" {
+			// 1. Получаем список всех НЕУДАЧНЫХ (failed) сервисов
+			// Это самое важное для сисадмина
+			out, _ := exec.Command("systemctl", "list-units", "--state=failed", "--no-legend").Output()
+			failedServices := string(out)
 
+			if len(strings.TrimSpace(failedServices)) == 0 {
+				failedServices = "Все системные сервисы работают штатно (failed units не найдено)."
+			}
+
+			// 2. Проверяем конкретно важные для нас сервисы
+			// Добавь сюда те, за которыми следишь
+			important := []string{"nginx", "ollama", "grafana", "prometheus"}
+			var importantStatus string
+			for _, s := range important {
+				sOut, _ := exec.Command("systemctl", "is-active", s).Output()
+				importantStatus += fmt.Sprintf("- %s: %s", s, string(sOut))
+			}
+
+			// 3. Скормим всё нейронке для резюме
+			prompt := fmt.Sprintf("Проанализируй состояние сервисов. \nУпавшие:\n%s\n\nСтатус важных:\n%s",
+				failedServices, importantStatus)
+
+			var analysis string
+			req := &api.GenerateRequest{Model: "qwen2.5-coder:3b", Prompt: prompt}
+			_ = client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+				analysis += resp.Response
+				return nil
+			})
+
+			// Сохраняем в историю
+			history[chatID] = append(history[chatID], api.Message{Role: "assistant", Content: "Анализ systemd: " + analysis})
+
+			msg := tgbotapi.NewMessage(chatID, "⚙️ *Статус Systemd:* \n\n"+analysis)
+			msg.ParseMode = "Markdown"
+			bot.Send(msg)
+			continue
+		}
 		// --- КОМАНДА /nginx (Проверка статуса) ---
 		if update.Message.IsCommand() && update.Message.Command() == "nginx" {
 
@@ -174,6 +212,36 @@ func main() {
 			history[chatID] = append(history[chatID], api.Message{Role: "assistant", Content: analysis})
 
 			msg := tgbotapi.NewMessage(chatID, "🔌 *Открытые порты:* \n\n"+analysis)
+			msg.ParseMode = "Markdown"
+			bot.Send(msg)
+			continue
+		}
+		if update.Message.IsCommand() && update.Message.Command() == "restart" {
+			serviceName := update.Message.CommandArguments() // Получаем текст после /restart
+			if serviceName == "" {
+				bot.Send(tgbotapi.NewMessage(chatID, "⚠️ Укажите имя сервиса, например: `/restart nginx`"))
+				continue
+			}
+
+			// Выполняем перезапуск через sudo
+			cmd := exec.Command("sudo", "systemctl", "restart", serviceName)
+			err := cmd.Run()
+
+			statusMsg := ""
+			if err != nil {
+				statusMsg = fmt.Sprintf("❌ Ошибка при перезапуске `%s`: %v", serviceName, err)
+			} else {
+				statusMsg = fmt.Sprintf("🔄 Сервис `%s` успешно перезапущен!", serviceName)
+			}
+
+			// Просим нейронку прокомментировать действие
+			var aiComment string
+			prompt := fmt.Sprintf("Я только что перезапустил сервис %s. Напиши короткое подтверждение как суровый сисадмин.", serviceName)
+			_ = client.Generate(ctx, &api.GenerateRequest{Model: "qwen2.5-coder:3b", Prompt: prompt}, func(resp api.GenerateResponse) {
+				aiComment += resp.Response
+			})
+
+			msg := tgbotapi.NewMessage(chatID, statusMsg+"\n\n"+aiComment)
 			msg.ParseMode = "Markdown"
 			bot.Send(msg)
 			continue
