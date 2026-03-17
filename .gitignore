@@ -1,0 +1,14 @@
+appengine-generated/
+go-chache/
+.env
+*.env
+.env.local
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+__debug_bin
+vendor/
+*.log
