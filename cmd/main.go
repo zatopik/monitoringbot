@@ -90,6 +90,30 @@ func main() {
 			internal.Status(bot, client, chatID, ctx, history)
 			continue
 		}
+		if update.Message.Command() == "cat" {
+			path := update.Message.CommandArguments()
+			// чтобы не прочитали /etc/shadow
+			if !strings.HasPrefix(path, "/etc/nginx") && !strings.HasPrefix(path, "/home") {
+				bot.Send(tgbotapi.NewMessage(chatID, "🚫 Доступ к этому пути ограничен."))
+				continue
+			}
+
+			content, err := os.ReadFile(path)
+			if err != nil {
+				bot.Send(tgbotapi.NewMessage(chatID, "❌ Ошибка чтения файла."))
+				continue
+			}
+
+			prompt := "Проверь этот конфиг на наличие ошибок или узких мест:\n" + string(content)
+			var analysis string
+			client.Generate(ctx, &api.GenerateRequest{Model: "qwen2.5-coder:3b", Prompt: prompt}, func(resp api.GenerateResponse) error {
+				analysis += resp.Response
+				return nil
+			})
+
+			bot.Send(tgbotapi.NewMessage(chatID, "📄 *Конфиг:* \n```\n"+string(content)+"\n```\n\n🔍 *Анализ ИИ:* "+analysis))
+		}
+
 		if update.Message.IsCommand() && update.Message.Command() == "logs" {
 			serviceName := update.Message.CommandArguments()
 			if serviceName == "" {
