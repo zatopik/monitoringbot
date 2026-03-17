@@ -1,5 +1,6 @@
 appengine-generated/
 go-chache/
+.go-chache/
 .env
 *.env
 .env.local
